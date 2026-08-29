@@ -1,8 +1,9 @@
-import 'dart:convert';
+import 'dart0convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -121,6 +122,9 @@ class WendesenWorkshopApp extends StatelessWidget {
           primary: Color(0xFFFFD700),
           secondary: Color(0xFF00E676),
           surface: Color(0xFF1E1E1E),
+        ),
+        textTheme: GoogleFonts.notoSansEthiopicTextTheme(
+          ThemeData.dark().textTheme,
         ),
       ),
       home: const MainNavigationScreen(),
@@ -908,9 +912,7 @@ class _RecordsScreenState extends State<RecordsScreen> {
                         color: Color(0xFFFFD700), size: 36)
                     : (item.bytes != null
                         ? Image.memory(item.bytes!, fit: BoxFit.cover)
-                        : (kIsWeb
-                            ? Image.network(item.file.path, fit: BoxFit.cover)
-                            : Image.file(File(item.file.path), fit: BoxFit.cover))),
+                        : Image.file(File(item.file.path), fit: BoxFit.cover)),
               ),
             ),
             const SizedBox(height: 6),
@@ -1225,12 +1227,7 @@ class _FullScreenMediaViewerState extends State<FullScreenMediaViewer> {
     super.initState();
 
     if (widget.mediaItem.isVideo) {
-      if (kIsWeb) {
-        _videoController =
-            VideoPlayerController.networkUrl(Uri.parse(widget.mediaItem.file.path));
-      } else {
-        _videoController = VideoPlayerController.file(File(widget.mediaItem.file.path));
-      }
+      _videoController = VideoPlayerController.file(File(widget.mediaItem.file.path));
 
       _videoController!.initialize().then((_) {
         setState(() {});
@@ -1292,9 +1289,7 @@ class _FullScreenMediaViewerState extends State<FullScreenMediaViewer> {
                 : const CircularProgressIndicator(color: Color(0xFFFFD700)))
             : (widget.mediaItem.bytes != null
                 ? Image.memory(widget.mediaItem.bytes!)
-                : (kIsWeb
-                    ? Image.network(widget.mediaItem.file.path)
-                    : Image.file(File(widget.mediaItem.file.path)))),
+                : Image.file(File(widget.mediaItem.file.path))),
       ),
     );
   }
