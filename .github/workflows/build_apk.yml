@@ -27,11 +27,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build Split APKs
-        run: flutter build apk --release --split-per-abi
+      - name: Build Universal Release APK
+        run: flutter build apk --release
 
-      - name: Upload ARM64 APK Artifact
+      - name: Upload Universal APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wondesen-workshop-arm64-apk
-          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          name: wondesen-workshop-universal-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
