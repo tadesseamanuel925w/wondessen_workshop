@@ -1,6 +1,6 @@
-name: wondessen_workshop
-description: "ወንደሰን ዎርክሾፕ - የመኪና ራዲያተር ስራዎች ማስተዳደሪያ መተግበሪያ"
-publish_to: "none"
+name: wondesen_workshop
+description: "A new Flutter project for Wondesen Workshop."
+publish_to: 'none'
 
 version: 1.0.0+1
 
@@ -10,10 +10,18 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  image_picker: ^1.0.7
-  shared_preferences: ^2.5.5
-  path_provider: ^2.1.2
+
+  # UI and Fonts
   cupertino_icons: ^1.0.6
+  google_fonts: ^6.1.0
+
+  # Local Storage & Utilities
+  shared_preferences: ^2.2.2
+
+  # Media & Speech Packages
+  video_player: ^2.8.2
+  speech_to_text: ^7.0.0
+  image_picker: ^1.0.7
 
 dev_dependencies:
   flutter_test:
@@ -22,3 +30,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/images/icon.png

@@ -1,503 +1,597 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:typed_data';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:video_player/video_player.dart';
 
 void main() {
-  runApp(const WondessenWorkshopApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const WendesenWorkshopApp());
 }
 
-class WondessenWorkshopApp extends StatelessWidget {
-  const WondessenWorkshopApp({super.key});
+// ---------------- ለማውዝ እና ታች ሁለቱም ስክሮል ማድረጊያ ----------------
+class CustomScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+      };
+}
+
+// ---------------- የዳታ አወቃቀር ለሚዲያ ----------------
+class MediaItem {
+  final XFile file;
+  final Uint8List? bytes;
+  final bool isVideo;
+
+  MediaItem({required this.file, this.bytes, required this.isVideo});
+}
+
+// ---------------- የዳታ ማከማቻ ----------------
+class AppData {
+  static final List<Map<String, dynamic>> serviceFiles = [];
+
+  static final List<Map<String, dynamic>> financeRecords = [
+    {
+      'id': '1',
+      'title': 'ሆዝ የተቀየረበት',
+      'date': '2026-08-14',
+      'amount': 2000.0,
+      'isIncome': true,
+    },
+    {
+      'id': '2',
+      'title': 'ለሆዝ ግዢ',
+      'date': '2026-08-14',
+      'amount': 1600.0,
+      'isIncome': false,
+    },
+  ];
+
+  static double get totalIncome {
+    return financeRecords
+        .where((item) => item['isIncome'] == true)
+        .fold(0.0, (sum, item) => sum + (item['amount'] as double));
+  }
+
+  static double get totalExpense {
+    return financeRecords
+        .where((item) => item['isIncome'] == false)
+        .fold(0.0, (sum, item) => sum + (item['amount'] as double));
+  }
+
+  static double get netProfit => totalIncome - totalExpense;
+}
+
+class WendesenWorkshopApp extends StatelessWidget {
+  const WendesenWorkshopApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Wondessen Workshop',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
+      scrollBehavior: CustomScrollBehavior(),
+      title: 'ወንደሰን ዎርክሾፕ',
+      theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
-        primaryColor: const Color(0xFFFFE500),
+        primaryColor: const Color(0xFFFFD700),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFFFFD700),
+          secondary: Color(0xFF00E676),
+          surface: Color(0xFF1E1E1E),
+        ),
       ),
-      home: const MainHomeScreen(),
+      home: const MainNavigationScreen(),
     );
   }
 }
 
-// የዳታ ሞዴሎች (Data Models) - ፎቶዎችን በ Base64 String ያስቀምጣል (Web እና Mobile ተስማሚ)
-class ServiceFile {
-  final String plateAndOwner;
-  final String workDetails;
-  final String? beforePhotoBase64;
-  final String? afterPhotoBase64;
-  final String? carPhotoBase64;
-  final DateTime date;
-
-  ServiceFile({
-    required this.plateAndOwner,
-    required this.workDetails,
-    this.beforePhotoBase64,
-    this.afterPhotoBase64,
-    this.carPhotoBase64,
-    required this.date,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'plateAndOwner': plateAndOwner,
-        'workDetails': workDetails,
-        'beforePhotoBase64': beforePhotoBase64,
-        'afterPhotoBase64': afterPhotoBase64,
-        'carPhotoBase64': carPhotoBase64,
-        'date': date.toIso8601String(),
-      };
-
-  factory ServiceFile.fromJson(Map<String, dynamic> json) => ServiceFile(
-        plateAndOwner: json['plateAndOwner'] ?? '',
-        workDetails: json['workDetails'] ?? '',
-        beforePhotoBase64: json['beforePhotoBase64'],
-        afterPhotoBase64: json['afterPhotoBase64'],
-        carPhotoBase64: json['carPhotoBase64'],
-        date: json['date'] != null ? DateTime.parse(json['date']) : DateTime.now(),
-      );
-}
-
-class TransactionItem {
-  final String title;
-  final double amount;
-  final bool isIncome; 
-  final DateTime date;
-
-  TransactionItem({
-    required this.title,
-    required this.amount,
-    required this.isIncome,
-    required this.date,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'title': title,
-        'amount': amount,
-        'isIncome': isIncome,
-        'date': date.toIso8601String(),
-      };
-
-  factory TransactionItem.fromJson(Map<String, dynamic> json) => TransactionItem(
-        title: json['title'] ?? '',
-        amount: json['amount']?.toDouble() ?? 0.0,
-        isIncome: json['isIncome'] ?? true,
-        date: json['date'] != null ? DateTime.parse(json['date']) : DateTime.now(),
-      );
-}
-
-// ዋና ማዕከል (Global Lists)
-List<ServiceFile> globalServiceFiles = [];
-List<TransactionItem> globalTransactions = [];
-
-// ዳታዎችን በ SharedPreferences የማስቀመጫ እና የመጫኛ ፋንክሽኖች
-Future<void> saveData() async {
-  final prefs = await SharedPreferences.getInstance();
-  
-  final serviceListString = globalServiceFiles.map((e) => jsonEncode(e.toJson())).toList();
-  await prefs.setStringList('saved_services', serviceListString);
-
-  final txListString = globalTransactions.map((e) => jsonEncode(e.toJson())).toList();
-  await prefs.setStringList('saved_transactions', txListString);
-}
-
-Future<void> loadData() async {
-  final prefs = await SharedPreferences.getInstance();
-  
-  final serviceListString = prefs.getStringList('saved_services');
-  if (serviceListString != null) {
-    globalServiceFiles = serviceListString.map((e) => ServiceFile.fromJson(jsonDecode(e))).toList();
-  }
-
-  final txListString = prefs.getStringList('saved_transactions');
-  if (txListString != null) {
-    globalTransactions = txListString.map((e) => TransactionItem.fromJson(jsonDecode(e))).toList();
-  } else {
-    globalTransactions = [
-      TransactionItem(title: 'የራዲያተር ሽያጭ እና ጥገና', amount: 14500, isIncome: true, date: DateTime.now()),
-      TransactionItem(title: 'መጠባበቂያ ዕቃ ግዥ', amount: 3200, isIncome: false, date: DateTime.now()),
-    ];
-  }
-}
-
-class MainHomeScreen extends StatefulWidget {
-  const MainHomeScreen({super.key});
+// ---------------- ዋና መነሻ ገጽ (Navigation) ----------------
+class MainNavigationScreen extends StatefulWidget {
+  const MainNavigationScreen({Key? key}) : super(key: key);
 
   @override
-  State<MainHomeScreen> createState() => _MainHomeScreenState();
+  State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
-class _MainHomeScreenState extends State<MainHomeScreen> {
-  int _currentIndex = 0;
-  bool _isLoading = true;
+class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  int _selectedIndex = 0;
 
-  @override
-  void initState() {
-    super.initState();
-    loadData().then((_) {
-      setState(() {
-        _isLoading = false;
-      });
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
     });
   }
 
-  List<Widget> get _screens => [
-    DashboardScreen(onDataChanged: () => setState(() {})),
-    const CustomerRecordsScreen(),
-    FinanceManagerScreen(onDataChanged: () => setState(() {})),
-    const SettingsScreen(),
-  ];
+  @override
+  Widget build(BuildContext context) {
+    final List<Widget> screens = [
+      DashboardScreen(onRefresh: () => setState(() {})),
+      RecordsScreen(onRefresh: () => setState(() {})),
+      FinanceHistoryScreen(onRefresh: () => setState(() {})),
+      const Center(
+          child: Text('ቅንብር (Settings)',
+              style: TextStyle(color: Colors.white, fontSize: 18))),
+    ];
+
+    return Scaffold(
+      body: screens[_selectedIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: _onItemTapped,
+        type: BottomNavigationBarType.fixed,
+        backgroundColor: const Color(0xFF121212),
+        selectedItemColor: const Color(0xFFFFD700),
+        unselectedItemColor: Colors.white54,
+        items: const [
+          BottomNavigationBarItem(
+              icon: Icon(Icons.grid_view_rounded), label: 'ዳሽቦርድ'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.people_alt_outlined), label: 'ደንበኞች'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.account_balance_wallet_outlined), label: 'ገንዘብ'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.settings_outlined), label: 'ቅንብር'),
+        ],
+      ),
+    );
+  }
+}
+
+// 1. Dashboard Screen
+class DashboardScreen extends StatelessWidget {
+  final VoidCallback onRefresh;
+  const DashboardScreen({Key? key, required this.onRefresh}) : super(key: key);
+
+  void _showIncomeDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => CustomFinanceDialog(
+        title: 'ገቢ መመዝገቢያ',
+        titleColor: const Color(0xFF00E676),
+        buttonColor: const Color(0xFFFFD700),
+        isIncome: true,
+        onSaved: onRefresh,
+      ),
+    );
+  }
+
+  void _showExpenseDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => CustomFinanceDialog(
+        title: 'ወጪ መመዝገቢያ',
+        titleColor: const Color(0xFFFF4081),
+        buttonColor: const Color(0xFFFFD700),
+        isIncome: false,
+        onSaved: onRefresh,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: Color(0xFFFFE500))),
-      );
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: Row(
-          children: const [
-            Icon(Icons.flash_on, color: Color(0xFFFFE500)),
-            SizedBox(width: 8),
-            Text(
-              'ወንደሰን ዎርክሾፕ',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.flash_on, color: Color(0xFFFFD700), size: 28),
+                SizedBox(width: 8),
+                Text('ወንደሰን ዎርክሾፕ',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white)),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text('FINANCE OVERVIEW',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text('Dashboard',
+                        style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  ],
+                ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFD700),
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20)),
+                  ),
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => const AddServiceFileScreen()),
+                    );
+                    onRefresh();
+                  },
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('+ አዲስ ፋይል ክፈት',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00BFA5),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('ጠቅላላ ገቢ',
+                            style: TextStyle(
+                                color: Colors.black87,
+                                fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text('Br ${AppData.totalIncome.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                                color: Colors.black,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF4081),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('ጠቅላላ ወጪ',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text('Br ${AppData.totalExpense.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFD700),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                children: [
+                  const Text('የተጣራ ትርፍ',
+                      style: TextStyle(
+                          color: Colors.black,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16)),
+                  const SizedBox(height: 6),
+                  Text('Br ${AppData.netProfit.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFFD700),
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(25)),
+                ),
+                onPressed: () => _showIncomeDialog(context),
+                child: const Text('+ ገቢ መመዝገቢያ',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF4081),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(25)),
+                ),
+                onPressed: () => _showExpenseDialog(context),
+                child: const Text('— ወጪ መመዝገቢያ',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
         ),
       ),
-      body: _screens[_currentIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        backgroundColor: const Color(0xFF1E1E1E),
-        selectedItemColor: const Color(0xFFFFE500),
-        unselectedItemColor: Colors.grey,
-        type: BottomNavigationBarType.fixed,
-        onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'ዳሽቦርድ'),
-          BottomNavigationBarItem(icon: Icon(Icons.people), label: 'ደንበኞች'),
-          BottomNavigationBarItem(icon: Icon(Icons.account_balance_wallet), label: 'ገንዘብ'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'ቅንብር'),
-        ],
-      ),
     );
   }
 }
 
-// 1. ዳሽቦርድ ማያ ገጽ (Dashboard Screen)
-class DashboardScreen extends StatefulWidget {
-  final VoidCallback onDataChanged;
-  const DashboardScreen({super.key, required this.onDataChanged});
-
-  @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
-}
-
-class _DashboardScreenState extends State<DashboardScreen> {
-  @override
-  Widget build(BuildContext context) {
-    double totalIncome = globalTransactions.where((t) => t.isIncome).fold(0, (sum, t) => sum + t.amount);
-    double totalExpense = globalTransactions.where((t) => !t.isIncome).fold(0, (sum, t) => sum + t.amount);
-    double netProfit = totalIncome - totalExpense;
-
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: ListView(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'FINANCE OVERVIEW',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-              ),
-              GestureDetector(
-                onTap: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const AddServiceFileScreen()),
-                  );
-                  setState(() {});
-                  widget.onDataChanged();
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFE500),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Text(
-                    '+ አዲስ ፋይል ክፈት',
-                    style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const Text('Dashboard', style: TextStyle(color: Colors.grey)),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF00FED4),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('የዘርፍ ገቢ', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      Text('Br ${totalIncome.toStringAsFixed(2)}', style: const TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF2E93),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('የዘርፍ ወጪ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      Text('Br ${totalExpense.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFE500),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              children: [
-                const Text('የተጣራ ትርፍ', style: TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Text('Br ${netProfit.toStringAsFixed(2)}', style: const TextStyle(color: Colors.black, fontSize: 26, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                const Text('በቀጥታ የተዘገበ ሂሳብ', style: TextStyle(color: Colors.black54, fontSize: 12)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFE500),
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
-            onPressed: () => _showAddTransactionDialog(context, true),
-            icon: const Icon(Icons.add),
-            label: const Text('ገቢ መመዝገቢያ', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          const SizedBox(height: 12),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF2E93),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
-            onPressed: () => _showAddTransactionDialog(context, false),
-            icon: const Icon(Icons.remove),
-            label: const Text('ወጪ መመዝገቢያ', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddTransactionDialog(BuildContext context, bool isIncome) {
-    final titleController = TextEditingController();
-    final amountController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1E1E1E),
-          title: Text(isIncome ? 'ገቢ መመዝገቢያ' : 'ወጪ መመዝገቢያ', style: TextStyle(color: isIncome ? const Color(0xFF00FED4) : const Color(0xFFFF2E93))),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: 'መግለጫ / ምክንያት', labelStyle: TextStyle(color: Colors.grey)),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: amountController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'መጠን (ብር)', labelStyle: TextStyle(color: Colors.grey)),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('ሰርዝ', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFE500), foregroundColor: Colors.black),
-              onPressed: () async {
-                if (titleController.text.isNotEmpty && amountController.text.isNotEmpty) {
-                  double? amount = double.tryParse(amountController.text);
-                  if (amount != null) {
-                    setState(() {
-                      globalTransactions.add(TransactionItem(
-                        title: titleController.text,
-                        amount: amount,
-                        isIncome: isIncome,
-                        date: DateTime.now(),
-                      ));
-                    });
-                    await saveData();
-                    widget.onDataChanged();
-                    Navigator.pop(context);
-                  }
-                }
-              },
-              child: const Text('መዝግብ'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// 2. አዲስ ፋይል መክፈቻ ገጽ
+// 2. አዲስ ፋይል መክፈቻ Screen
 class AddServiceFileScreen extends StatefulWidget {
-  const AddServiceFileScreen({super.key});
+  const AddServiceFileScreen({Key? key}) : super(key: key);
 
   @override
   State<AddServiceFileScreen> createState() => _AddServiceFileScreenState();
 }
 
 class _AddServiceFileScreenState extends State<AddServiceFileScreen> {
-  final _plateController = TextEditingController();
-  final _detailsController = TextEditingController();
-  
-  Uint8List? _beforePhotoBytes;
-  Uint8List? _afterPhotoBytes;
-  Uint8List? _carPhotoBytes;
+  final TextEditingController _carModelController = TextEditingController();
+  final TextEditingController _carInfoController = TextEditingController();
+  final TextEditingController _workDetailController = TextEditingController();
+
+  final TextEditingController _beforeItemTypeController = TextEditingController();
+  final TextEditingController _afterItemTypeController = TextEditingController();
+  final TextEditingController _carItemTypeController = TextEditingController();
+  final TextEditingController _extraItemTypeController = TextEditingController();
 
   final ImagePicker _picker = ImagePicker();
+  late stt.SpeechToText _speech;
+  bool _isListening = false;
+  String _activeListeningField = '';
 
-  Future<void> _pickImage(int type) async {
-    final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
-    if (image != null) {
-      var bytes = await image.readAsBytes();
+  final List<MediaItem> _beforeMediaList = [];
+  final List<MediaItem> _afterMediaList = [];
+  final List<MediaItem> _carMediaList = [];
+  final List<MediaItem> _extraMediaList = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _speech = stt.SpeechToText();
+  }
+
+  void _listenVoice(TextEditingController controller, String fieldName) async {
+    if (!_isListening) {
+      bool available = await _speech.initialize();
+      if (available) {
+        setState(() {
+          _isListening = true;
+          _activeListeningField = fieldName;
+        });
+        _speech.listen(onResult: (val) {
+          setState(() {
+            controller.text = val.recognizedWords;
+          });
+        });
+      }
+    } else {
       setState(() {
-        if (type == 1) _beforePhotoBytes = bytes;
-        if (type == 2) _afterPhotoBytes = bytes;
-        if (type == 3) _carPhotoBytes = bytes;
+        _isListening = false;
+        _activeListeningField = '';
       });
+      _speech.stop();
     }
+  }
+
+  void _pickMediaOptions(List<MediaItem> targetList, String category) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF232323),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('ማስገቢያ ይምረጡ ($category)',
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFFFD700))),
+              const SizedBox(height: 15),
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Color(0xFFFFD700)),
+                title: const Text('ፎቶ አንሳ (Camera)'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final media = await _picker.pickImage(source: ImageSource.camera);
+                  if (media != null) {
+                    final bytes = await media.readAsBytes();
+                    setState(() {
+                      targetList.add(MediaItem(file: media, bytes: bytes, isVideo: false));
+                    });
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam, color: Color(0xFFFFD700)),
+                title: const Text('ቪዲዮ ቅረፅ (Video Record)'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final media = await _picker.pickVideo(source: ImageSource.camera);
+                  if (media != null) {
+                    final bytes = await media.readAsBytes();
+                    setState(() {
+                      targetList.add(MediaItem(file: media, bytes: bytes, isVideo: true));
+                    });
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Color(0xFFFFD700)),
+                title: const Text('ከጋለሪ/ፋይል ምረጥ (Photos & Videos)'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final List<XFile> mediaList = await _picker.pickMultipleMedia();
+                  for (var media in mediaList) {
+                    final bytes = await media.readAsBytes();
+                    bool isVid = media.name.toLowerCase().endsWith('.mp4') || media.path.toLowerCase().endsWith('.mp4');
+                    setState(() {
+                      targetList.add(MediaItem(file: media, bytes: bytes, isVideo: isVid));
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _saveFile() {
+    if (_carModelController.text.isEmpty || _carInfoController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('እባክዎ የመኪናውን ዓይነት እና ሰሌዳ/ባለቤት ይሙሉ!')),
+      );
+      return;
+    }
+
+    AppData.serviceFiles.insert(0, {
+      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+      'carModel': _carModelController.text,
+      'carInfo': _carInfoController.text,
+      'workDetail': _workDetailController.text,
+      'beforeItemType': _beforeItemTypeController.text,
+      'afterItemType': _afterItemTypeController.text,
+      'carItemType': _carItemTypeController.text,
+      'extraItemType': _extraItemTypeController.text,
+      'beforeMediaList': List<MediaItem>.from(_beforeMediaList),
+      'afterMediaList': List<MediaItem>.from(_afterMediaList),
+      'carMediaList': List<MediaItem>.from(_carMediaList),
+      'extraMediaList': List<MediaItem>.from(_extraMediaList),
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('ፋይሉ በስኬት ተመዝግቧል!')),
+    );
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('አዲስ ፋይል መክፈቻ', style: TextStyle(color: Color(0xFFFFE500))),
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('አዲስ ፋይል መክፈቻ',
+            style: TextStyle(
+                color: Color(0xFFFFD700), fontWeight: FontWeight.bold)),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
-        child: ListView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('ADD NEW SERVICE FILE', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _plateController,
-              decoration: InputDecoration(
-                labelText: 'የመኪና ሰሌዳ እና ባለቤት ስም',
-                filled: true,
-                fillColor: const Color(0xFF1E1E1E),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              ),
+            _buildCustomInputBox(
+              controller: _carModelController,
+              hintText: 'የመኪናው ዓይነት (ለምሳሌ፦ Toyota Vitz)',
+              fieldName: 'car_model',
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _detailsController,
+            const SizedBox(height: 12),
+            _buildCustomInputBox(
+              controller: _carInfoController,
+              hintText: 'የመኪና ሰሌዳ እና ባለቤት ስም',
+              fieldName: 'car_info',
+            ),
+            const SizedBox(height: 12),
+            _buildCustomInputBox(
+              controller: _workDetailController,
+              hintText: 'የተሰራው ስራ ዝርዝር',
+              fieldName: 'work_detail',
               maxLines: 3,
-              decoration: InputDecoration(
-                labelText: 'የተሰራው ስራ ዝርዝር',
-                filled: true,
-                fillColor: const Color(0xFF1E1E1E),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              ),
             ),
-            const SizedBox(height: 20),
-            const Text('የፎቶ ማስረጃዎች', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFFFE500))),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                _buildImagePlaceholder('ከመሰራቱ በፊት', _beforePhotoBytes, () => _pickImage(1)),
-                const SizedBox(width: 10),
-                _buildImagePlaceholder('ከተሰራ በኋላ', _afterPhotoBytes, () => _pickImage(2)),
-                const SizedBox(width: 10),
-                _buildImagePlaceholder('የመኪናው ፎቶ', _carPhotoBytes, () => _pickImage(3)),
-              ],
+            const SizedBox(height: 25),
+            const Text('የፎቶ እና ቪዲዮ ማስረጃዎች',
+                style: TextStyle(
+                    color: Color(0xFFFFD700),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15)),
+            const SizedBox(height: 12),
+            _buildMediaSection(
+              title: '1. ከመሰራቱ በፊት ማስረጃ',
+              mediaList: _beforeMediaList,
+              onTap: () => _pickMediaOptions(_beforeMediaList, 'ከመሰራቱ በፊት'),
+              controller: _beforeItemTypeController,
+              hintText: 'የ 1ኛው ዕቃ ዓይነት',
+              fieldName: 'before_type',
+            ),
+            const SizedBox(height: 12),
+            _buildMediaSection(
+              title: '2. ከተሰራ በኋላ ማስረጃ',
+              mediaList: _afterMediaList,
+              onTap: () => _pickMediaOptions(_afterMediaList, 'ከተሰራ በኋላ'),
+              controller: _afterItemTypeController,
+              hintText: 'የ 2ኛው ዕቃ ዓይነት',
+              fieldName: 'after_type',
+            ),
+            const SizedBox(height: 12),
+            _buildMediaSection(
+              title: '3. የመኪናው አጠቃላይ ፎቶ/ቪዲዮ',
+              mediaList: _carMediaList,
+              onTap: () => _pickMediaOptions(_carMediaList, 'የመኪናው አጠቃላይ'),
+              controller: _carItemTypeController,
+              hintText: 'የ 3ኛው ዕቃ ዓይነት',
+              fieldName: 'car_type',
+            ),
+            const SizedBox(height: 12),
+            _buildMediaSection(
+              title: '4. ተጨማሪ የተለወጠ ዕቃ',
+              mediaList: _extraMediaList,
+              onTap: () => _pickMediaOptions(_extraMediaList, 'ተጨማሪ ዕቃ'),
+              controller: _extraItemTypeController,
+              hintText: 'የ 4ኛው ዕቃ ዓይነት',
+              fieldName: 'extra_type',
             ),
             const SizedBox(height: 30),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFFE500),
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFFD700),
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(25)),
+                ),
+                onPressed: _saveFile,
+                child: const Text('ፋይሉን መዝግብ',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
-              onPressed: () async {
-                if (_plateController.text.isNotEmpty) {
-                  // ምስሎችን ወደ Base64 String በመቀየር በድርም ጭምር በቋሚነት እንዲቀመጡ ማድረግ
-                  String? beforeBase64 = _beforePhotoBytes != null ? base64Encode(_beforePhotoBytes!) : null;
-                  String? afterBase64 = _afterPhotoBytes != null ? base64Encode(_afterPhotoBytes!) : null;
-                  String? carBase64 = _carPhotoBytes != null ? base64Encode(_carPhotoBytes!) : null;
-
-                  globalServiceFiles.add(ServiceFile(
-                    plateAndOwner: _plateController.text,
-                    workDetails: _detailsController.text,
-                    beforePhotoBase64: beforeBase64,
-                    afterPhotoBase64: afterBase64,
-                    carPhotoBase64: carBase64,
-                    date: DateTime.now(),
-                  ));
-                  await saveData();
-                  Navigator.pop(context);
-                }
-              },
-              child: const Text('ፋይሉን መዝግብ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ),
           ],
         ),
@@ -505,247 +599,734 @@ class _AddServiceFileScreenState extends State<AddServiceFileScreen> {
     );
   }
 
-  Widget _buildImagePlaceholder(String label, Uint8List? bytes, VoidCallback onTap) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: Column(
-          children: [
-            Container(
-              height: 90,
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFFFE500)),
-                image: bytes != null ? DecorationImage(image: MemoryImage(bytes), fit: BoxFit.cover) : null,
-              ),
-              child: bytes == null ? const Center(child: Icon(Icons.camera_alt, color: Color(0xFFFFE500))) : null,
-            ),
-            const SizedBox(height: 6),
-            Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11, color: Colors.white70)),
-          ],
-        ),
+  Widget _buildMediaSection({
+    required String title,
+    required List<MediaItem> mediaList,
+    required VoidCallback onTap,
+    required TextEditingController controller,
+    required String hintText,
+    required String fieldName,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white24),
       ),
-    );
-  }
-}
-
-// 3. ደንበኞች ፋይሎች ማሳያ (Customer Records)
-class CustomerRecordsScreen extends StatefulWidget {
-  const CustomerRecordsScreen({super.key});
-
-  @override
-  State<CustomerRecordsScreen> createState() => _CustomerRecordsScreenState();
-}
-
-class _CustomerRecordsScreenState extends State<CustomerRecordsScreen> {
-  String searchQuery = "";
-
-  @override
-  Widget build(BuildContext context) {
-    final filteredFiles = globalServiceFiles.where((file) {
-      return file.plateAndOwner.toLowerCase().contains(searchQuery.toLowerCase()) ||
-             file.workDetails.toLowerCase().contains(searchQuery.toLowerCase());
-    }).toList();
-
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('VEHICLE FILES & RECORDS', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-          const SizedBox(height: 12),
-          TextField(
-            decoration: InputDecoration(
-              labelText: 'በሰሌዳ ቁጥር ወይም በባለቤት ስም ይፈልጉ',
-              prefixIcon: const Icon(Icons.search, color: Color(0xFFFFE500)),
-              filled: true,
-              fillColor: const Color(0xFF1E1E1E),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            onChanged: (value) {
-              setState(() {
-                searchQuery = value;
-              });
-            },
+          Text(title,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              InkWell(
+                onTap: onTap,
+                child: Container(
+                  width: 85,
+                  height: 75,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF262626),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: mediaList.isNotEmpty
+                          ? const Color(0xFF00E676)
+                          : const Color(0xFFFFD700),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        mediaList.isNotEmpty ? Icons.add_circle : Icons.add_a_photo_outlined,
+                        color: mediaList.isNotEmpty ? const Color(0xFF00E676) : const Color(0xFFFFD700),
+                        size: 24,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        mediaList.isEmpty ? '+ ጨምር' : '${mediaList.length} ሚዲያዎች',
+                        style: TextStyle(
+                            color: mediaList.isNotEmpty ? const Color(0xFF00E676) : Colors.white70,
+                            fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _buildCustomInputBox(
+                  controller: controller,
+                  hintText: hintText,
+                  fieldName: fieldName,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: filteredFiles.isEmpty
-                ? const Center(child: Text('ምንም የተመዘገበ የሰርቪስ ፋይል አልተገኘም', style: TextStyle(color: Colors.grey)))
-                : ListView.builder(
-                    itemCount: filteredFiles.length,
-                    itemBuilder: (context, index) {
-                      final file = filteredFiles[index];
-                      return Card(
-                        color: const Color(0xFF1E1E1E),
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
+          if (mediaList.isNotEmpty) const SizedBox(height: 10),
+          if (mediaList.isNotEmpty)
+            SizedBox(
+              height: 50,
+              child: ListView.builder(
+                physics: const BouncingScrollPhysics(),
+                scrollDirection: Axis.horizontal,
+                itemCount: mediaList.length,
+                itemBuilder: (context, idx) {
+                  final item = mediaList[idx];
+                  return Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    width: 50,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: item.isVideo
+                              ? Container(
+                                  color: Colors.black87,
+                                  child: const Center(
+                                      child: Icon(Icons.play_arrow, color: Color(0xFFFFD700), size: 20)),
+                                )
+                              : (item.bytes != null
+                                  ? Image.memory(item.bytes!, fit: BoxFit.cover, width: 50, height: 50)
+                                  : Image.file(File(item.file.path), fit: BoxFit.cover, width: 50, height: 50)),
+                        ),
+                        Positioned(
+                          top: 0,
+                          right: 0,
+                          child: GestureDetector(
+                            onTap: () => setState(() => mediaList.removeAt(idx)),
+                            child: Container(
+                              color: Colors.black54,
+                              child: const Icon(Icons.close, color: Colors.redAccent, size: 14),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCustomInputBox({
+    required TextEditingController controller,
+    required String hintText,
+    required String fieldName,
+    int maxLines = 1,
+  }) {
+    bool isListeningThis = _isListening && _activeListeningField == fieldName;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white24),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      child: Stack(
+        children: [
+          TextField(
+            controller: controller,
+            maxLines: maxLines,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: hintText,
+              hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+              border: InputBorder.none,
+              contentPadding:
+                  const EdgeInsets.only(right: 35, top: 8, bottom: 8),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            top: 2,
+            child: IconButton(
+              icon: Icon(
+                isListeningThis ? Icons.mic : Icons.mic_none,
+                color: isListeningThis
+                    ? Colors.redAccent
+                    : const Color(0xFFFFD700),
+                size: 18,
+              ),
+              onPressed: () => _listenVoice(controller, fieldName),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 3. የፋይሎች እና የመኪናዎች ዝርዝር Screen (ተስተካክሏል)
+class RecordsScreen extends StatefulWidget {
+  final VoidCallback onRefresh;
+  const RecordsScreen({Key? key, required this.onRefresh}) : super(key: key);
+
+  @override
+  State<RecordsScreen> createState() => _RecordsScreenState();
+}
+
+class _RecordsScreenState extends State<RecordsScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  void _deleteFile(String id) {
+    setState(() {
+      AppData.serviceFiles.removeWhere((file) => file['id'] == id);
+    });
+    widget.onRefresh();
+  }
+
+  void _openMediaViewer(MediaItem mediaItem) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => FullScreenMediaViewer(mediaItem: mediaItem),
+      ),
+    );
+  }
+
+  Widget _buildMediaCard(String label, MediaItem item, String? itemType) {
+    return GestureDetector(
+      onTap: () => _openMediaViewer(item),
+      child: Container(
+        margin: const EdgeInsets.only(right: 12),
+        width: 110,
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2B2B2B),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Column(
+          children: [
+            Container(
+              height: 70,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.black45,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: item.isVideo
+                    ? const Icon(Icons.play_circle_fill,
+                        color: Color(0xFFFFD700), size: 36)
+                    : (item.bytes != null
+                        ? Image.memory(item.bytes!, fit: BoxFit.cover)
+                        : (kIsWeb
+                            ? Image.network(item.file.path, fit: BoxFit.cover)
+                            : Image.file(File(item.file.path), fit: BoxFit.cover))),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                  color: Color(0xFFFFD700),
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (itemType != null && itemType.isNotEmpty)
+              Text(
+                itemType,
+                style: const TextStyle(color: Colors.white70, fontSize: 9),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredFiles = AppData.serviceFiles.where((file) {
+      final query = _searchQuery.toLowerCase();
+      final model = file['carModel'].toString().toLowerCase();
+      final info = file['carInfo'].toString().toLowerCase();
+      return model.contains(query) || info.contains(query);
+    }).toList();
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.flash_on, color: Color(0xFFFFD700), size: 28),
+                SizedBox(width: 8),
+                Text('ወንደሰን ዎርክሾፕ',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white)),
+              ],
+            ),
+            const SizedBox(height: 15),
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E1E),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (val) => setState(() => _searchQuery = val),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search, color: Color(0xFFFFD700)),
+                  hintText: 'በመኪና፣ ሰሌዳ ወይም ባለቤት ይፈልጉ',
+                  hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                  border: InputBorder.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: filteredFiles.isEmpty
+                  ? const Center(
+                      child: Text('ምንም የተመዘገበ ፋይል የለም',
+                          style: TextStyle(color: Colors.white54)))
+                  : ListView.builder(
+                      itemCount: filteredFiles.length,
+                      itemBuilder: (context, index) {
+                        final file = filteredFiles[index];
+                        final beforeList = file['beforeMediaList'] as List<MediaItem>? ?? [];
+                        final afterList = file['afterMediaList'] as List<MediaItem>? ?? [];
+                        final carList = file['carMediaList'] as List<MediaItem>? ?? [];
+                        final extraList = file['extraMediaList'] as List<MediaItem>? ?? [];
+
+                        final List<Widget> allMediaWidgets = [
+                          ...beforeList.map((m) => _buildMediaCard('1. ከመሰራቱ በፊት', m, file['beforeItemType'])),
+                          ...afterList.map((m) => _buildMediaCard('2. ከተሰራ በኋላ', m, file['afterItemType'])),
+                          ...carList.map((m) => _buildMediaCard('3. የመኪናው ፎቶ', m, file['carItemType'])),
+                          ...extraList.map((m) => _buildMediaCard('4. ተጨማሪ ዕቃ', m, file['extraItemType'])),
+                        ];
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E1E1E),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Expanded(
-                                    child: Text('ሰሌዳ/ባለቤት፦ ${file.plateAndOwner}', style: const TextStyle(color: Color(0xFFFFE500), fontWeight: FontWeight.bold)),
-                                  ),
+                                  Text('ሰሌዳ/ባለቤት:- ${file['carInfo']}',
+                                      style: const TextStyle(
+                                          color: Color(0xFFFFD700),
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 15)),
                                   IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () async {
-                                      setState(() {
-                                        globalServiceFiles.remove(file);
-                                      });
-                                      await saveData();
-                                    },
+                                    icon: const Icon(Icons.delete_outline,
+                                        color: Colors.redAccent),
+                                    onPressed: () => _deleteFile(file['id']),
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 6),
-                              Text('ዝርዝር፦ ${file.workDetails}', style: const TextStyle(color: Colors.white70)),
-                              const SizedBox(height: 12),
-                              const Divider(color: Colors.grey),
+                              Text('የመኪናው ዓይነት:- ${file['carModel']}',
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 13)),
                               const SizedBox(height: 4),
-                              const Text('የፎቶ ማስረጃዎች:', style: TextStyle(color: Color(0xFFFFE500), fontSize: 13, fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                                children: [
-                                  _buildSavedPhotoItem('ከመሰራቱ በፊት', file.beforePhotoBase64),
-                                  _buildSavedPhotoItem('ከተሰራ በኋላ', file.afterPhotoBase64),
-                                  _buildSavedPhotoItem('የመኪናው ፎቶ', file.carPhotoBase64),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSavedPhotoItem(String title, String? base64Str) {
-    Uint8List? bytes;
-    if (base64Str != null && base64Str.isNotEmpty) {
-      try {
-        bytes = base64Decode(base64Str);
-      } catch (e) {
-        bytes = null;
-      }
-    }
-
-    return Column(
-      children: [
-        Container(
-          width: 75,
-          height: 75,
-          decoration: BoxDecoration(
-            color: Colors.black26,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey.shade700),
-            image: bytes != null
-                ? DecorationImage(image: MemoryImage(bytes), fit: BoxFit.cover)
-                : null,
-          ),
-          child: bytes == null
-              ? const Icon(Icons.image_not_supported, color: Colors.grey, size: 24)
-              : null,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          title,
-          style: const TextStyle(fontSize: 10, color: Colors.white70),
-          textAlign: TextAlign.center,
-        ),
-      ],
-    );
-  }
-}
-
-// 4. የገንዘብ ማስተዳደሪያ (Finance Manager Screen)
-class FinanceManagerScreen extends StatefulWidget {
-  final VoidCallback onDataChanged;
-  const FinanceManagerScreen({super.key, required this.onDataChanged});
-
-  @override
-  State<FinanceManagerScreen> createState() => _FinanceManagerScreenState();
-}
-
-class _FinanceManagerScreenState extends State<FinanceManagerScreen> {
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('የገንዘብ ዝውውር ታሪክ (Finance History)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-          const SizedBox(height: 12),
-          Expanded(
-            child: globalTransactions.isEmpty
-                ? const Center(child: Text('ምንም የሂሳብ መረጃ የለም', style: TextStyle(color: Colors.grey)))
-                : ListView.builder(
-                    itemCount: globalTransactions.length,
-                    itemBuilder: (context, index) {
-                      final tx = globalTransactions[index];
-                      return Card(
-                        color: const Color(0xFF1E1E1E),
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: ListTile(
-                          leading: Icon(
-                            tx.isIncome ? Icons.arrow_downward : Icons.arrow_upward,
-                            color: tx.isIncome ? const Color(0xFF00FED4) : const Color(0xFFFF2E93),
-                          ),
-                          title: Text(tx.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          subtitle: Text('${tx.date.year}-${tx.date.month}-${tx.date.day}', style: const TextStyle(color: Colors.grey)),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '${tx.isIncome ? '+' : '-'} Br ${tx.amount.toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  color: tx.isIncome ? const Color(0xFF00FED4) : const Color(0xFFFF2E93),
-                                  fontWeight: FontWeight.bold,
+                              Text('ዝርዝር:- ${file['workDetail']}',
+                                  style: const TextStyle(
+                                      color: Colors.white70, fontSize: 12)),
+                              const Divider(color: Colors.white12, height: 20),
+                              
+                              // እዚህ ጋ በጎን ስክሮል (Roll) እንዲያደርግ በ SizedBox እና BouncingScrollPhysics ተስተካክሏል
+                              SizedBox(
+                                height: 115,
+                                child: ListView(
+                                  physics: const BouncingScrollPhysics(),
+                                  scrollDirection: Axis.horizontal,
+                                  children: allMediaWidgets,
                                 ),
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                                onPressed: () async {
-                                  setState(() {
-                                    globalTransactions.remove(tx);
-                                  });
-                                  await saveData();
-                                  widget.onDataChanged();
-                                },
-                              ),
                             ],
                           ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// 5. ቅንብሮች (Settings Screen)
-class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
+// 4. የገንዘብ ታሪክ Screen
+class FinanceHistoryScreen extends StatefulWidget {
+  final VoidCallback onRefresh;
+  const FinanceHistoryScreen({Key? key, required this.onRefresh}) : super(key: key);
+
+  @override
+  State<FinanceHistoryScreen> createState() => _FinanceHistoryScreenState();
+}
+
+class _FinanceHistoryScreenState extends State<FinanceHistoryScreen> {
+  void _deleteRecord(String id) {
+    setState(() {
+      AppData.financeRecords.removeWhere((rec) => rec['id'] == id);
+    });
+    widget.onRefresh();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Text(
-        'የወንደሰን ዎርክሾፕ መተግበሪያ (v1.0)',
-        style: TextStyle(color: Colors.white, fontSize: 16),
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.flash_on, color: Color(0xFFFFD700), size: 28),
+                SizedBox(width: 8),
+                Text('ወንደሰን ዎርክሾፕ',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white)),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Text('የገንዘብ እንቅስቃሴ ታሪክ',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFFFD700))),
+            const SizedBox(height: 15),
+            Expanded(
+              child: AppData.financeRecords.isEmpty
+                  ? const Center(
+                      child: Text('ምንም የገንዘብ መዝገብ የለም',
+                          style: TextStyle(color: Colors.white54)))
+                  : ListView.builder(
+                      itemCount: AppData.financeRecords.length,
+                      itemBuilder: (context, index) {
+                        final record = AppData.financeRecords[index];
+                        final bool isIncome = record['isIncome'];
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E1E1E),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isIncome
+                                  ? const Color(0xFF00E676).withOpacity(0.3)
+                                  : const Color(0xFFFF4081).withOpacity(0.3),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  CircleAvatar(
+                                    backgroundColor: isIncome
+                                        ? const Color(0xFF00E676).withOpacity(0.2)
+                                        : const Color(0xFFFF4081).withOpacity(0.2),
+                                    child: Icon(
+                                      isIncome
+                                          ? Icons.arrow_downward
+                                          : Icons.arrow_upward,
+                                      color: isIncome
+                                          ? const Color(0xFF00E676)
+                                          : const Color(0xFFFF4081),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        record['title'],
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        record['date'],
+                                        style: const TextStyle(
+                                            color: Colors.white54, fontSize: 11),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              Row(
+                                children: [
+                                  Text(
+                                    '${isIncome ? "+" : "-"} Br ${record['amount'].toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      color: isIncome
+                                          ? const Color(0xFF00E676)
+                                          : const Color(0xFFFF4081),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline,
+                                        color: Colors.white38, size: 20),
+                                    onPressed: () => _deleteRecord(record['id']),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// 5. ፎቶ/ቪዲዮ በሙሉ ስክሪን ማሳያ (Media Viewer)
+class FullScreenMediaViewer extends StatefulWidget {
+  final MediaItem mediaItem;
+
+  const FullScreenMediaViewer({Key? key, required this.mediaItem})
+      : super(key: key);
+
+  @override
+  State<FullScreenMediaViewer> createState() => _FullScreenMediaViewerState();
+}
+
+class _FullScreenMediaViewerState extends State<FullScreenMediaViewer> {
+  VideoPlayerController? _videoController;
+
+  @override
+  void initState() {
+    super.initState();
+
+    if (widget.mediaItem.isVideo) {
+      if (kIsWeb) {
+        _videoController =
+            VideoPlayerController.networkUrl(Uri.parse(widget.mediaItem.file.path));
+      } else {
+        _videoController = VideoPlayerController.file(File(widget.mediaItem.file.path));
+      }
+
+      _videoController!.initialize().then((_) {
+        setState(() {});
+        _videoController!.play();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Center(
+        child: widget.mediaItem.isVideo
+            ? (_videoController != null && _videoController!.value.isInitialized
+                ? AspectRatio(
+                    aspectRatio: _videoController!.value.aspectRatio,
+                    child: Stack(
+                      alignment: Alignment.bottomCenter,
+                      children: [
+                        VideoPlayer(_videoController!),
+                        VideoProgressIndicator(_videoController!,
+                            allowScrubbing: true),
+                        FloatingActionButton(
+                          backgroundColor: Colors.transparent,
+                          elevation: 0,
+                          onPressed: () {
+                            setState(() {
+                              _videoController!.value.isPlaying
+                                  ? _videoController!.pause()
+                                  : _videoController!.play();
+                            });
+                          },
+                          child: Icon(
+                            _videoController!.value.isPlaying
+                                ? Icons.pause
+                                : Icons.play_arrow,
+                            color: const Color(0xFFFFD700),
+                            size: 40,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : const CircularProgressIndicator(color: Color(0xFFFFD700)))
+            : (widget.mediaItem.bytes != null
+                ? Image.memory(widget.mediaItem.bytes!)
+                : (kIsWeb
+                    ? Image.network(widget.mediaItem.file.path)
+                    : Image.file(File(widget.mediaItem.file.path)))),
+      ),
+    );
+  }
+}
+
+// 6. የገቢ/ወጪ መመዝገቢያ Dialog Widget
+class CustomFinanceDialog extends StatefulWidget {
+  final String title;
+  final Color titleColor;
+  final Color buttonColor;
+  final bool isIncome;
+  final VoidCallback onSaved;
+
+  const CustomFinanceDialog({
+    Key? key,
+    required this.title,
+    required this.titleColor,
+    required this.buttonColor,
+    required this.isIncome,
+    required this.onSaved,
+  }) : super(key: key);
+
+  @override
+  State<CustomFinanceDialog> createState() => _CustomFinanceDialogState();
+}
+
+class _CustomFinanceDialogState extends State<CustomFinanceDialog> {
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _amountController = TextEditingController();
+
+  void _saveFinanceRecord() {
+    final title = _titleController.text;
+    final amount = double.tryParse(_amountController.text);
+
+    if (title.isEmpty || amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('እባክዎ ትክክለኛ መረጃ ይሙሉ!')),
+      );
+      return;
+    }
+
+    final now = DateTime.now();
+    final dateStr =
+        "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+    AppData.financeRecords.insert(0, {
+      'id': now.millisecondsSinceEpoch.toString(),
+      'title': title,
+      'date': dateStr,
+      'amount': amount,
+      'isIncome': widget.isIncome,
+    });
+
+    widget.onSaved();
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF232323),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.title,
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: widget.titleColor)),
+            const SizedBox(height: 15),
+            TextField(
+              controller: _titleController,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'ምክንያት/መግለጫ (ለምሳሌ፦ የባሌስተራ ስራ)',
+                hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24)),
+                focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFFFFD700))),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _amountController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'የገንዘብ መጠን (በብር)',
+                hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24)),
+                focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFFFFD700))),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('ሰርዝ',
+                      style: TextStyle(color: Colors.white54)),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: widget.buttonColor,
+                    foregroundColor: Colors.black,
+                  ),
+                  onPressed: _saveFinanceRecord,
+                  child: const Text('መዝግብ',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
