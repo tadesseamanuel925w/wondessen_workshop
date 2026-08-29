@@ -1,14 +1,77 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:video_player/video_player.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const WendesenWorkshopApp());
+}
+
+// ---------------- የዳታ ማከማቻ ----------------
+class AppData {
+  static List<Map<String, dynamic>> serviceFiles = [];
+  static List<Map<String, dynamic>> financeRecords = [];
+
+  static Future<void> loadSavedData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? savedFinance = prefs.getString('finance_records');
+    final String? savedFiles = prefs.getString('service_files');
+
+    if (savedFinance != null) {
+      financeRecords = List<Map<String, dynamic>>.from(json.decode(savedFinance));
+    } else {
+      financeRecords = [
+        {
+          'id': '1',
+          'title': 'ሆዝ የተቀየረበት',
+          'date': '2026-08-14',
+          'amount': 2000.0,
+          'isIncome': true,
+        },
+        {
+          'id': '2',
+          'title': 'ለሆዝ ግዢ',
+          'date': '2026-08-14',
+          'amount': 1600.0,
+          'isIncome': false,
+        },
+      ];
+    }
+
+    if (savedFiles != null) {
+      serviceFiles = List<Map<String, dynamic>>.from(json.decode(savedFiles));
+    }
+  }
+
+  static Future<void> saveFinanceData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('finance_records', json.encode(financeRecords));
+  }
+
+  static Future<void> saveFilesData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('service_files', json.encode(serviceFiles));
+  }
+
+  static double get totalIncome {
+    return financeRecords
+        .where((item) => item['isIncome'] == true)
+        .fold(0.0, (sum, item) => sum + (item['amount'] as double));
+  }
+
+  static double get totalExpense {
+    return financeRecords
+        .where((item) => item['isIncome'] == false)
+        .fold(0.0, (sum, item) => sum + (item['amount'] as double));
+  }
+
+  static double get netProfit => totalIncome - totalExpense;
 }
 
 // ---------------- ለማውዝ እና ታች ሁለቱም ስክሮል ማድረጊያ ----------------
@@ -28,42 +91,18 @@ class MediaItem {
   final bool isVideo;
 
   MediaItem({required this.file, this.bytes, required this.isVideo});
-}
 
-// ---------------- የዳታ ማከማቻ ----------------
-class AppData {
-  static final List<Map<String, dynamic>> serviceFiles = [];
+  Map<String, dynamic> toJson() => {
+        'path': file.path,
+        'isVideo': isVideo,
+      };
 
-  static final List<Map<String, dynamic>> financeRecords = [
-    {
-      'id': '1',
-      'title': 'ሆዝ የተቀየረበት',
-      'date': '2026-08-14',
-      'amount': 2000.0,
-      'isIncome': true,
-    },
-    {
-      'id': '2',
-      'title': 'ለሆዝ ግዢ',
-      'date': '2026-08-14',
-      'amount': 1600.0,
-      'isIncome': false,
-    },
-  ];
-
-  static double get totalIncome {
-    return financeRecords
-        .where((item) => item['isIncome'] == true)
-        .fold(0.0, (sum, item) => sum + (item['amount'] as double));
+  factory MediaItem.fromJson(Map<String, dynamic> json) {
+    return MediaItem(
+      file: XFile(json['path']),
+      isVideo: json['isVideo'],
+    );
   }
-
-  static double get totalExpense {
-    return financeRecords
-        .where((item) => item['isIncome'] == false)
-        .fold(0.0, (sum, item) => sum + (item['amount'] as double));
-  }
-
-  static double get netProfit => totalIncome - totalExpense;
 }
 
 class WendesenWorkshopApp extends StatelessWidget {
@@ -99,6 +138,20 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _selectedIndex = 0;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initApp();
+  }
+
+  Future<void> _initApp() async {
+    await AppData.loadSavedData();
+    setState(() {
+      _isLoading = false;
+    });
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -108,6 +161,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFFFFD700)),
+        ),
+      );
+    }
+
     final List<Widget> screens = [
       DashboardScreen(onRefresh: () => setState(() {})),
       RecordsScreen(onRefresh: () => setState(() {})),
@@ -379,7 +440,22 @@ class _AddServiceFileScreenState extends State<AddServiceFileScreen> {
 
   void _listenVoice(TextEditingController controller, String fieldName) async {
     if (!_isListening) {
-      bool available = await _speech.initialize();
+      bool available = await _speech.initialize(
+        onStatus: (val) {
+          if (val == 'done' || val == 'notListening') {
+            setState(() {
+              _isListening = false;
+              _activeListeningField = '';
+            });
+          }
+        },
+        onError: (val) {
+          setState(() {
+            _isListening = false;
+            _activeListeningField = '';
+          });
+        },
+      );
       if (available) {
         setState(() {
           _isListening = true;
@@ -468,7 +544,7 @@ class _AddServiceFileScreenState extends State<AddServiceFileScreen> {
     );
   }
 
-  void _saveFile() {
+  void _saveFile() async {
     if (_carModelController.text.isEmpty || _carInfoController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('እባክዎ የመኪናውን ዓይነት እና ሰሌዳ/ባለቤት ይሙሉ!')),
@@ -485,16 +561,20 @@ class _AddServiceFileScreenState extends State<AddServiceFileScreen> {
       'afterItemType': _afterItemTypeController.text,
       'carItemType': _carItemTypeController.text,
       'extraItemType': _extraItemTypeController.text,
-      'beforeMediaList': List<MediaItem>.from(_beforeMediaList),
-      'afterMediaList': List<MediaItem>.from(_afterMediaList),
-      'carMediaList': List<MediaItem>.from(_carMediaList),
-      'extraMediaList': List<MediaItem>.from(_extraMediaList),
+      'beforeMediaList': _beforeMediaList.map((m) => m.toJson()).toList(),
+      'afterMediaList': _afterMediaList.map((m) => m.toJson()).toList(),
+      'carMediaList': _carMediaList.map((m) => m.toJson()).toList(),
+      'extraMediaList': _extraMediaList.map((m) => m.toJson()).toList(),
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('ፋይሉ በስኬት ተመዝግቧል!')),
-    );
-    Navigator.pop(context);
+    await AppData.saveFilesData();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ፋይሉ በስኬት ተመዝግቧል!')),
+      );
+      Navigator.pop(context);
+    }
   }
 
   @override
@@ -770,7 +850,7 @@ class _AddServiceFileScreenState extends State<AddServiceFileScreen> {
   }
 }
 
-// 3. የፋይሎች እና የመኪናዎች ዝርዝር Screen (ተስተካክሏል)
+// 3. የፋይሎች እና የመኪናዎች ዝርዝር Screen
 class RecordsScreen extends StatefulWidget {
   final VoidCallback onRefresh;
   const RecordsScreen({Key? key, required this.onRefresh}) : super(key: key);
@@ -783,10 +863,11 @@ class _RecordsScreenState extends State<RecordsScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
-  void _deleteFile(String id) {
+  void _deleteFile(String id) async {
     setState(() {
       AppData.serviceFiles.removeWhere((file) => file['id'] == id);
     });
+    await AppData.saveFilesData();
     widget.onRefresh();
   }
 
@@ -910,10 +991,19 @@ class _RecordsScreenState extends State<RecordsScreen> {
                       itemCount: filteredFiles.length,
                       itemBuilder: (context, index) {
                         final file = filteredFiles[index];
-                        final beforeList = file['beforeMediaList'] as List<MediaItem>? ?? [];
-                        final afterList = file['afterMediaList'] as List<MediaItem>? ?? [];
-                        final carList = file['carMediaList'] as List<MediaItem>? ?? [];
-                        final extraList = file['extraMediaList'] as List<MediaItem>? ?? [];
+
+                        List<MediaItem> parseMedia(dynamic rawList) {
+                          if (rawList == null) return [];
+                          return (rawList as List).map((item) {
+                            if (item is MediaItem) return item;
+                            return MediaItem.fromJson(item as Map<String, dynamic>);
+                          }).toList();
+                        }
+
+                        final beforeList = parseMedia(file['beforeMediaList']);
+                        final afterList = parseMedia(file['afterMediaList']);
+                        final carList = parseMedia(file['carMediaList']);
+                        final extraList = parseMedia(file['extraMediaList']);
 
                         final List<Widget> allMediaWidgets = [
                           ...beforeList.map((m) => _buildMediaCard('1. ከመሰራቱ በፊት', m, file['beforeItemType'])),
@@ -955,16 +1045,15 @@ class _RecordsScreenState extends State<RecordsScreen> {
                                   style: const TextStyle(
                                       color: Colors.white70, fontSize: 12)),
                               const Divider(color: Colors.white12, height: 20),
-                              
-                              // እዚህ ጋ በጎን ስክሮል (Roll) እንዲያደርግ በ SizedBox እና BouncingScrollPhysics ተስተካክሏል
-                              SizedBox(
-                                height: 115,
-                                child: ListView(
-                                  physics: const BouncingScrollPhysics(),
-                                  scrollDirection: Axis.horizontal,
-                                  children: allMediaWidgets,
+                              if (allMediaWidgets.isNotEmpty)
+                                SizedBox(
+                                  height: 115,
+                                  child: ListView(
+                                    physics: const BouncingScrollPhysics(),
+                                    scrollDirection: Axis.horizontal,
+                                    children: allMediaWidgets,
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
                         );
@@ -988,10 +1077,11 @@ class FinanceHistoryScreen extends StatefulWidget {
 }
 
 class _FinanceHistoryScreenState extends State<FinanceHistoryScreen> {
-  void _deleteRecord(String id) {
+  void _deleteRecord(String id) async {
     setState(() {
       AppData.financeRecords.removeWhere((rec) => rec['id'] == id);
     });
+    await AppData.saveFinanceData();
     widget.onRefresh();
   }
 
@@ -1086,7 +1176,7 @@ class _FinanceHistoryScreenState extends State<FinanceHistoryScreen> {
                               Row(
                                 children: [
                                   Text(
-                                    '${isIncome ? "+" : "-"} Br ${record['amount'].toStringAsFixed(2)}',
+                                    '${isIncome ? "+" : "-"} Br ${(record['amount'] as num).toStringAsFixed(2)}',
                                     style: TextStyle(
                                       color: isIncome
                                           ? const Color(0xFF00E676)
@@ -1234,8 +1324,40 @@ class CustomFinanceDialog extends StatefulWidget {
 class _CustomFinanceDialogState extends State<CustomFinanceDialog> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _amountController = TextEditingController();
+  late stt.SpeechToText _speech;
+  bool _isListening = false;
 
-  void _saveFinanceRecord() {
+  @override
+  void initState() {
+    super.initState();
+    _speech = stt.SpeechToText();
+  }
+
+  void _listenVoice() async {
+    if (!_isListening) {
+      bool available = await _speech.initialize(
+        onStatus: (val) {
+          if (val == 'done' || val == 'notListening') {
+            setState(() => _isListening = false);
+          }
+        },
+        onError: (val) => setState(() => _isListening = false),
+      );
+      if (available) {
+        setState(() => _isListening = true);
+        _speech.listen(onResult: (val) {
+          setState(() {
+            _titleController.text = val.recognizedWords;
+          });
+        });
+      }
+    } else {
+      setState(() => _isListening = false);
+      _speech.stop();
+    }
+  }
+
+  void _saveFinanceRecord() async {
     final title = _titleController.text;
     final amount = double.tryParse(_amountController.text);
 
@@ -1258,8 +1380,12 @@ class _CustomFinanceDialogState extends State<CustomFinanceDialog> {
       'isIncome': widget.isIncome,
     });
 
+    await AppData.saveFinanceData();
+
     widget.onSaved();
-    Navigator.pop(context);
+    if (mounted) {
+      Navigator.pop(context);
+    }
   }
 
   @override
@@ -1278,17 +1404,30 @@ class _CustomFinanceDialogState extends State<CustomFinanceDialog> {
                     fontWeight: FontWeight.bold,
                     color: widget.titleColor)),
             const SizedBox(height: 15),
-            TextField(
-              controller: _titleController,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                hintText: 'ምክንያት/መግለጫ (ለምሳሌ፦ የባሌስተራ ስራ)',
-                hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
-                enabledBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24)),
-                focusedBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFFFFD700))),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _titleController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'ምክንያት/መግለጫ (ለምሳሌ፦ የባሌስተራ ስራ)',
+                      hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                      enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.white24)),
+                      focusedBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Color(0xFFFFD700))),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(
+                    _isListening ? Icons.mic : Icons.mic_none,
+                    color: _isListening ? Colors.redAccent : const Color(0xFFFFD700),
+                  ),
+                  onPressed: _listenVoice,
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             TextField(

@@ -13,14 +13,14 @@ dependencies:
 
   # UI and Fonts
   cupertino_icons: ^1.0.6
-  google_fonts: ^6.1.0
+  google_fonts: ^8.2.1
 
   # Local Storage & Utilities
-  shared_preferences: ^2.2.2
+  shared_preferences: ^2.5.5
 
   # Media & Speech Packages
   video_player: ^2.8.2
-  speech_to_text: ^7.0.0
+  speech_to_text: ^7.4.0
   image_picker: ^1.0.7
 
 dev_dependencies:
